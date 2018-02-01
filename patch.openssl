@@ -1,0 +1,44 @@
+diff --git a/crypto/bio/bio_lib.c b/crypto/bio/bio_lib.c
+index 62392c3..8b91056 100644
+--- a/crypto/bio/bio_lib.c
++++ b/crypto/bio/bio_lib.c
+@@ -90,6 +90,16 @@ void *BIO_get_data(BIO *a)
+     return a->ptr;
+ }
+ 
++void BIO_set_num(BIO *a, int num)
++{
++    a->num = num;
++}
++
++int BIO_get_num(BIO *a)
++{
++    return a->num;
++}
++
+ void BIO_set_init(BIO *a, int init)
+ {
+     a->init = init;
+diff --git a/include/openssl/bio.h b/include/openssl/bio.h
+index 31fd91c..2f91013 100644
+--- a/include/openssl/bio.h
++++ b/include/openssl/bio.h
+@@ -535,6 +535,8 @@ BIO *BIO_new(const BIO_METHOD *type);
+ int BIO_free(BIO *a);
+ void BIO_set_data(BIO *a, void *ptr);
+ void *BIO_get_data(BIO *a);
++void BIO_set_num(BIO *a, int num);
++int BIO_get_num(BIO *a);
+ void BIO_set_init(BIO *a, int init);
+ int BIO_get_init(BIO *a);
+ void BIO_set_shutdown(BIO *a, int shut);
+diff --git a/util/libcrypto.num b/util/libcrypto.num
+index a6d313f..33eda60 100644
+--- a/util/libcrypto.num
++++ b/util/libcrypto.num
+@@ -4232,3 +4232,5 @@ ZINT64_it                               4215	1_1_0f	EXIST:!EXPORT_VAR_AS_FUNCTIO
+ ZINT64_it                               4215	1_1_0f	EXIST:EXPORT_VAR_AS_FUNCTION:FUNCTION:
+ CRYPTO_secure_clear_free                4315	1_1_0g	EXIST::FUNCTION:
+ EVP_PKEY_set1_engine                    4347	1_1_0g	EXIST::FUNCTION:ENGINE
++BIO_get_num                             4348    1_1_0   EXIST::FUNCTION:
++BIO_set_num                             4349    1_1_0   EXIST::FUNCTION:

@@ -102,6 +102,9 @@ prepare_target_source_dirs()
   mkdir -p "${SOURCEDIR}"
   tar zxf "${CURRENTPATH}/${OPENSSL_ARCHIVE_FILE_NAME}" -C "${SOURCEDIR}"
   cd "${SOURCEDIR}/${OPENSSL_ARCHIVE_BASE_NAME}"
+  cd ../../../
+  git apply patch.openssl --unsafe-paths --directory="${SOURCEDIR}/${OPENSSL_ARCHIVE_BASE_NAME}"
+  cd "${SOURCEDIR}/${OPENSSL_ARCHIVE_BASE_NAME}"
   chmod u+x ./Configure
 }
 
