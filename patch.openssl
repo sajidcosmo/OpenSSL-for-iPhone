@@ -1,5 +1,6 @@
+
 diff --git a/crypto/bio/bio_lib.c b/crypto/bio/bio_lib.c
-index 62392c3..8b91056 100644
+index 62392c3a52..8b91056657 100644
 --- a/crypto/bio/bio_lib.c
 +++ b/crypto/bio/bio_lib.c
 @@ -90,6 +90,16 @@ void *BIO_get_data(BIO *a)
@@ -20,7 +21,7 @@ index 62392c3..8b91056 100644
  {
      a->init = init;
 diff --git a/include/openssl/bio.h b/include/openssl/bio.h
-index 31fd91c..2f91013 100644
+index 31fd91c728..2f91013ef8 100644
 --- a/include/openssl/bio.h
 +++ b/include/openssl/bio.h
 @@ -535,6 +535,8 @@ BIO *BIO_new(const BIO_METHOD *type);
@@ -32,13 +33,179 @@ index 31fd91c..2f91013 100644
  void BIO_set_init(BIO *a, int init);
  int BIO_get_init(BIO *a);
  void BIO_set_shutdown(BIO *a, int shut);
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index 4e7f82f433..8146773452 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -1162,6 +1162,7 @@ DECLARE_PEM_rw(SSL_SESSION, SSL_SESSION)
+ # define SSL_CTRL_GET_TLSEXT_STATUS_REQ_CB_ARG   129
+ # define SSL_CTRL_GET_MIN_PROTO_VERSION          130
+ # define SSL_CTRL_GET_MAX_PROTO_VERSION          131
++# define DTLS_CTRL_SET_TIMEOUT_DURATION          132
+ # define SSL_CERT_SET_FIRST                      1
+ # define SSL_CERT_SET_NEXT                       2
+ # define SSL_CERT_SET_SERVER                     3
+@@ -1305,6 +1306,8 @@ DECLARE_PEM_rw(SSL_SESSION, SSL_SESSION)
+         SSL_ctrl(s, SSL_CTRL_GET_MIN_PROTO_VERSION, NULL, NULL)
+ #define SSL_get_max_proto_version(s) \
+         SSL_ctrl(s, SSL_CTRL_GET_MAX_PROTO_VERSION, NULL, NULL)
++# define DTLSv1_set_initial_timeout_duration(ssl, initial_timeout) \
++        SSL_ctrl(ssl,DTLS_CTRL_SET_TIMEOUT_DURATION,(initial_timeout), NULL)
+ 
+ #if OPENSSL_API_COMPAT < 0x10100000L
+ /* Provide some compatibility macros for removed functionality. */
+diff --git a/ssl/d1_lib.c b/ssl/d1_lib.c
+index 55a81c34ba..92517d67b8 100644
+--- a/ssl/d1_lib.c
++++ b/ssl/d1_lib.c
+@@ -25,10 +25,17 @@ static void get_current_time(struct timeval *t);
+ static int dtls1_set_handshake_header(SSL *s, int type, unsigned long len);
+ static int dtls1_handshake_write(SSL *s);
+ static unsigned int dtls1_link_min_mtu(void);
++static void dtls1_set_initial_timeout_duration(SSL *s, unsigned int duration_ms);
+ 
+ /* XDTLS:  figure out the right values */
+ static const unsigned int g_probable_mtu[] = { 1500, 512, 256 };
+ 
++/*
++ * RFC 6347 states that implementations SHOULD use an initial timer value of
++ * 1 second.
++ */
++static const unsigned int default_initial_timeout_ms = 1000;
++
+ const SSL3_ENC_METHOD DTLSv1_enc_data = {
+     tls1_enc,
+     tls1_mac,
+@@ -108,6 +115,7 @@ int dtls1_new(SSL *s)
+         return (0);
+     }
+ 
++    d1->initial_timeout_duration_ms = default_initial_timeout_ms;
+     s->d1 = d1;
+     s->method->ssl_clear(s);
+     return (1);
+@@ -165,6 +173,7 @@ void dtls1_clear(SSL *s)
+     pqueue *sent_messages;
+     unsigned int mtu;
+     unsigned int link_mtu;
++    unsigned int initial_timeout_duration_ms;
+ 
+     DTLS_RECORD_LAYER_clear(&s->rlayer);
+ 
+@@ -173,6 +182,7 @@ void dtls1_clear(SSL *s)
+         sent_messages = s->d1->sent_messages;
+         mtu = s->d1->mtu;
+         link_mtu = s->d1->link_mtu;
++        initial_timeout_duration_ms = s->d1->initial_timeout_duration_ms;
+ 
+         dtls1_clear_queues(s);
+ 
+@@ -189,6 +199,7 @@ void dtls1_clear(SSL *s)
+ 
+         s->d1->buffered_messages = buffered_messages;
+         s->d1->sent_messages = sent_messages;
++        s->d1->initial_timeout_duration_ms = initial_timeout_duration_ms;
+     }
+ 
+     ssl3_clear(s);
+@@ -232,6 +243,9 @@ long dtls1_ctrl(SSL *s, int cmd, long larg, void *parg)
+             return 0;
+         s->d1->mtu = larg;
+         return larg;
++    case DTLS_CTRL_SET_TIMEOUT_DURATION:
++        dtls1_set_initial_timeout_duration(s, larg);
++        break;
+     default:
+         ret = ssl3_ctrl(s, cmd, larg, parg);
+         break;
+@@ -249,20 +263,29 @@ void dtls1_start_timer(SSL *s)
+     }
+ #endif
+ 
+-    /* If timer is not set, initialize duration with 1 second */
++    /* If timer is not set, initialize duration to set initial value */
+     if (s->d1->next_timeout.tv_sec == 0 && s->d1->next_timeout.tv_usec == 0) {
+-        s->d1->timeout_duration = 1;
++        s->d1->timeout_duration_ms = s->d1->initial_timeout_duration_ms;
+     }
+ 
+     /* Set timeout to current time */
+     get_current_time(&(s->d1->next_timeout));
+ 
+     /* Add duration to current time */
+-    s->d1->next_timeout.tv_sec += s->d1->timeout_duration;
++    s->d1->next_timeout.tv_sec += s->d1->timeout_duration_ms / 1000;
++    s->d1->next_timeout.tv_usec += (s->d1->timeout_duration_ms % 1000) * 1000;
++    if (s->d1->next_timeout.tv_usec >= 1000000) {
++      s->d1->next_timeout.tv_sec++;
++      s->d1->next_timeout.tv_usec -= 1000000;
++    }
+     BIO_ctrl(SSL_get_rbio(s), BIO_CTRL_DGRAM_SET_NEXT_TIMEOUT, 0,
+              &(s->d1->next_timeout));
+ }
+ 
++void dtls1_set_initial_timeout_duration(SSL *s, unsigned int duration_ms) {
++  s->d1->initial_timeout_duration_ms = duration_ms;
++}
++
+ struct timeval *dtls1_get_timeout(SSL *s, struct timeval *timeleft)
+ {
+     struct timeval timenow;
+@@ -323,9 +346,10 @@ int dtls1_is_timer_expired(SSL *s)
+ 
+ void dtls1_double_timeout(SSL *s)
+ {
+-    s->d1->timeout_duration *= 2;
+-    if (s->d1->timeout_duration > 60)
+-        s->d1->timeout_duration = 60;
++    s->d1->timeout_duration_ms *= 2;
++    if (s->d1->timeout_duration_ms > 60000) {
++      s->d1->timeout_duration_ms = 60000;
++    }
+     dtls1_start_timer(s);
+ }
+ 
+@@ -334,7 +358,7 @@ void dtls1_stop_timer(SSL *s)
+     /* Reset everything */
+     memset(&s->d1->timeout, 0, sizeof(s->d1->timeout));
+     memset(&s->d1->next_timeout, 0, sizeof(s->d1->next_timeout));
+-    s->d1->timeout_duration = 1;
++    s->d1->timeout_duration_ms = s->d1->initial_timeout_duration_ms;
+     BIO_ctrl(SSL_get_rbio(s), BIO_CTRL_DGRAM_SET_NEXT_TIMEOUT, 0,
+              &(s->d1->next_timeout));
+     /* Clear retransmission buffer */
+diff --git a/ssl/ssl_locl.h b/ssl/ssl_locl.h
+index de4a520c2a..3b3445a3d6 100644
+--- a/ssl/ssl_locl.h
++++ b/ssl/ssl_locl.h
+@@ -1391,13 +1391,18 @@ typedef struct dtls1_state_st {
+     unsigned int mtu;           /* max DTLS packet size */
+     struct hm_header_st w_msg_hdr;
+     struct hm_header_st r_msg_hdr;
++    /*
++     * initial_timeout_duration_ms is the default DTLS timeout duration in
++     * milliseconds. It's used to initialize the timer any time it's restarted
++     */
++    unsigned initial_timeout_duration_ms;
+     struct dtls1_timeout_st timeout;
+     /*
+      * Indicates when the last handshake msg or heartbeat sent will timeout
+      */
+     struct timeval next_timeout;
+-    /* Timeout duration */
+-    unsigned short timeout_duration;
++    /* Timeout duration in msec */
++    unsigned timeout_duration_ms;
+     unsigned int retransmitting;
+ # ifndef OPENSSL_NO_SCTP
+     int shutdown_received;
 diff --git a/util/libcrypto.num b/util/libcrypto.num
-index a6d313f..33eda60 100644
+index a6d313f89f..33eda607fd 100644
 --- a/util/libcrypto.num
 +++ b/util/libcrypto.num
 @@ -4232,3 +4232,5 @@ ZINT64_it                               4215	1_1_0f	EXIST:!EXPORT_VAR_AS_FUNCTIO
  ZINT64_it                               4215	1_1_0f	EXIST:EXPORT_VAR_AS_FUNCTION:FUNCTION:
  CRYPTO_secure_clear_free                4315	1_1_0g	EXIST::FUNCTION:
  EVP_PKEY_set1_engine                    4347	1_1_0g	EXIST::FUNCTION:ENGINE
-+BIO_get_num                             4348    1_1_0   EXIST::FUNCTION:
-+BIO_set_num                             4349    1_1_0   EXIST::FUNCTION:
++BIO_get_num                             4348    1_1_0g   EXIST::FUNCTION:
++BIO_set_num                             4349    1_1_0g   EXIST::FUNCTION:
