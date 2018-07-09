@@ -37,7 +37,8 @@ TVOS_MIN_SDK_VERSION="9.0"
 
 # Init optional env variables (use available variable or default to empty string)
 CURL_OPTIONS="${CURL_OPTIONS:-}"
-CONFIG_OPTIONS="${CONFIG_OPTIONS:-g}"
+CONFIG_OPTIONS="${CONFIG_OPTIONS:-}"
+CONFIG_OPTIONS="${CONFIG_OPTIONS} -g"
 
 echo_help()
 {
