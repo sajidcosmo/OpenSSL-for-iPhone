@@ -54,6 +54,7 @@ echo_help()
   echo " -v, --verbose                     Enable verbose logging"
   echo "     --verbose-on-error            Dump last 500 lines from log file if an error occurs (for Travis builds)"
   echo "     --version=VERSION             OpenSSL version to build (defaults to ${DEFAULTVERSION})"
+  echo "     --debug                       OpenSSL build with Debug symbols"
   echo
   echo "Options for OpenSSL 1.0.2 and lower ONLY"
   echo "     --archs=\"ARCH ARCH ...\"       Space-separated list of architectures to build"
@@ -250,6 +251,9 @@ case $i in
     ;;
   --verbose-on-error)
     LOG_VERBOSE="verbose-on-error"
+    ;;
+  --debug)
+    CONFIG_OPTIONS="${CONFIG_OPTIONS} -g"
     ;;
   --version=*)
     VERSION="${i#*=}"
